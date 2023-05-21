@@ -12,5 +12,8 @@ Pod::Spec.new do |s|
   s.author       = 'Joltup'
   s.source_files = 'ios/**/*.{h,m}'
   s.platform     = :ios, "8.0"
-  s.dependency 'React-Core'
+  s.dependency 'React-Core', 'QCloudCore', 'QCloudCOSXML', 'Reachability'
+  s.frameworks = "CommonCrypto", "CoreTelephony", "SystemConfiguration", "UIKit", "AVFoundation", "CoreMedia", "ImageIO"
+  s.libraries = "c++", "c++abi", "z", "iconv", "icucore"
+
 end
