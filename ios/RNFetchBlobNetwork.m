@@ -252,7 +252,6 @@ static void initialize_tables() {
 
 - (void)onPublishProgress:(NSInteger)uploadBytes totalBytes:(NSInteger)totalBytes {
   NSLog(@"onPublishProgress [%ld/%ld]", uploadBytes, totalBytes);
-  NSString *percent = [NSString stringWithFormat:@"%0.0f", (uploadBytes * 1.0)/totalBytes * 100];
     
   NSNumber * now = [NSNumber numberWithFloat:((float)uploadBytes/(float)totalBytes)];
 
@@ -263,7 +262,7 @@ static void initialize_tables() {
                 @"taskId": self.taskId,
                 @"written": [NSString stringWithFormat:@"%ld", (long) uploadBytes],
                 @"total": [NSString stringWithFormat:@"%ld", (long) totalBytes],
-                @"percent": percent
+                @"percent": @((uploadBytes * 1.0)/totalBytes)
                 }
          ];
     }
