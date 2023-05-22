@@ -40,6 +40,7 @@ public class RNFetchBlobUploadVideo extends BroadcastReceiver implements Runnabl
 
     private void releaseTaskResource() {
         if(RNFetchBlobUploadVideo.taskTable.containsKey(taskId))
+            RNFetchBlobUploadVideo.taskTable.get(taskId).canclePublish();
             RNFetchBlobUploadVideo.taskTable.remove(taskId);
         if(RNFetchBlobReq.uploadProgressReport.containsKey(taskId))
             RNFetchBlobReq.uploadProgressReport.remove(taskId);
@@ -56,7 +57,7 @@ public class RNFetchBlobUploadVideo extends BroadcastReceiver implements Runnabl
         mVideoPublish.setListener(new TXUGCPublishTypeDef.ITXVideoPublishListener() {
             @Override
             public void onPublishProgress(long uploadBytes, long totalBytes) {
-                Log.d("upload video", "onPublishProgress: " + uploadBytes + "--" + totalBytes);
+                Log.d("upload video", "onPublishProgress: " + uploadBytes + "/" + totalBytes);
                 RNFetchBlobProgressConfig reportConfig = RNFetchBlobReq.getReportUploadProgress(thisRef.get().taskId);
 
                 double progress = uploadBytes * 1.0 / totalBytes;
@@ -68,7 +69,7 @@ public class RNFetchBlobUploadVideo extends BroadcastReceiver implements Runnabl
                     args.putString("total", String.valueOf(totalBytes));
                     args.putDouble("percent", progress);
                     thisRef.get().context.getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter.class)
-                            .emit(RNFetchBlobConst.EVENT_PROGRESS, args);
+                            .emit(RNFetchBlobConst.EVENT_UPLOAD_PROGRESS, args);
                 }
             }
             @Override
