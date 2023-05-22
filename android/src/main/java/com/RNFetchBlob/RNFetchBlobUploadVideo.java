@@ -39,11 +39,14 @@ public class RNFetchBlobUploadVideo extends BroadcastReceiver implements Runnabl
     }
 
     private void releaseTaskResource() {
-        if(RNFetchBlobUploadVideo.taskTable.containsKey(taskId))
-            RNFetchBlobUploadVideo.taskTable.get(taskId).canclePublish();
+        if(RNFetchBlobUploadVideo.taskTable.containsKey(taskId)) {
+            TXUGCPublish publish = RNFetchBlobUploadVideo.taskTable.get(taskId);
+            publish.canclePublish();
             RNFetchBlobUploadVideo.taskTable.remove(taskId);
-        if(RNFetchBlobReq.uploadProgressReport.containsKey(taskId))
+        }
+        if(RNFetchBlobReq.uploadProgressReport.containsKey(taskId)) {
             RNFetchBlobReq.uploadProgressReport.remove(taskId);
+        }
     }
 
     public void uploadFile(ReadableMap map) {
