@@ -1,6 +1,6 @@
 {
   "name": "@jtreact/rn-fetch-blob",
-  "version": "0.13.5",
+  "version": "0.13.6",
   "description": "A module provides upload, download, and files access API. Supports file stream read/write for process large files.",
   "main": "index.js",
   "scripts": {
