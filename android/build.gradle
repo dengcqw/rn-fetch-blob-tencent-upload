@@ -42,4 +42,8 @@ dependencies {
     implementation "com.facebook.react:react-native:${safeExtGet('reactNativeVersion', '+')}"
     //compile 'com.squareup.okhttp3:okhttp:+'
     //{RNFetchBlob_PRE_0.28_DEPDENDENCY}
+
+    // 上传sdk
+    implementation 'com.qcloud.cos:cos-android-nobeacon:5.8.5'
+    implementation 'com.qcloud.cos:quic:1.5.38'
 }

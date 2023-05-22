@@ -14,6 +14,9 @@
 #import "RNFetchBlobConst.h"
 #import "RNFetchBlobProgress.h"
 
+#import "TXUGCPublishListener.h"
+#import "TXUGCPublish.h"
+
 #if __has_include(<React/RCTAssert.h>)
 #import <React/RCTRootView.h>
 #import <React/RCTLog.h>
@@ -40,6 +43,25 @@ static void initialize_tables() {
         expirationTable = [[NSMapTable alloc] init];
     }
 }
+
+
+@interface STVideoUploadDelegate : NSObject <TXVideoPublishListener>
+@property (nonatomic, strong) TXUGCPublish *videoPublish;
+
+@property (nonatomic, strong) id retainself;
+@property (nullable, nonatomic) NSString * taskId;
+@property (nonatomic) long long expectedBytes;
+@property (nonatomic) long long receivedBytes;
+@property (nonatomic) BOOL isServerPush;
+@property (nullable, nonatomic) NSMutableData * respData;
+@property (nullable, strong, nonatomic) RCTResponseSenderBlock callback;
+@property (nullable, nonatomic) RCTBridge * bridge;
+@property (nullable, nonatomic) NSDictionary * options;
+@property (nullable, nonatomic) NSError * error;
+@property (nullable, nonatomic) RNFetchBlobProgress *progressConfig;
+@property (nullable, nonatomic) RNFetchBlobProgress *uploadProgressConfig;
+@property (nullable, nonatomic, weak) NSURLSessionDataTask *task;
+@end
 
 
 @implementation RNFetchBlobNetwork
@@ -93,6 +115,27 @@ static void initialize_tables() {
     }
 }
 
+- (void)uploadVideo:(NSDictionary *)dict
+                  taskId:(NSString *)taskId
+              bridge:(RCTBridge * _Nullable)bridgeRef
+           callback:(RCTResponseSenderBlock)callback {
+    STVideoUploadDelegate *request = [[STVideoUploadDelegate alloc] init];
+    request.retainself = request;
+    request.callback = callback;
+    request.taskId = taskId;
+    request.bridge = bridgeRef;
+    
+    NSString * fileURL = [dict[@"fileURL"] stringByRemovingPercentEncoding];
+    TXPublishParam *publishParam = [[TXPublishParam alloc] init];
+    publishParam.signature  = dict[@"sign"];
+    publishParam.videoPath  = fileURL;
+    [request.videoPublish publishVideo:publishParam];
+    @synchronized([RNFetchBlobNetwork class]) {
+        [self.requestsTable setObject:(RNFetchBlobRequest*)request forKey:taskId];
+        [self checkProgressConfig];
+    }
+}
+
 - (void) checkProgressConfig {
     //reconfig progress
     [self.rebindProgressDict enumerateKeysAndObjectsUsingBlock:^(NSString * _Nonnull key, RNFetchBlobProgress * _Nonnull config, BOOL * _Nonnull stop) {
@@ -136,13 +179,24 @@ static void initialize_tables() {
 - (void) cancelRequest:(NSString *)taskId
 {
     NSURLSessionDataTask * task;
+    STVideoUploadDelegate * videoUpload;
     
     @synchronized ([RNFetchBlobNetwork class]) {
-        task = [self.requestsTable objectForKey:taskId].task;
+        RNFetchBlobRequest *req = [self.requestsTable objectForKey:taskId];
+        if ([req isKindOfClass:[STVideoUploadDelegate class]]) {
+            videoUpload = (STVideoUploadDelegate *)req;
+        } else {
+            task = req.task;
+        }
     }
     
     if (task && task.state == NSURLSessionTaskStateRunning) {
         [task cancel];
+    }
+    
+    if (videoUpload) {
+        [videoUpload.videoPublish canclePublish];
+        videoUpload.retainself = nil;
     }
 }
 
@@ -176,6 +230,53 @@ static void initialize_tables() {
         [expirationTable removeAllObjects];
         expirationTable = [[NSMapTable alloc] init];
     }
+}
+
+@end
+
+@implementation STVideoUploadDelegate
+
+- (void)dealloc
+{
+    NSLog(@"STVideoUploadDelegate dealloc");
+}
+
+- (instancetype)init {
+  self = [super init];
+  if (self) {
+    _videoPublish = [[TXUGCPublish alloc] initWithUserID:@"1304755944"];
+    _videoPublish.delegate = self;
+  }
+  return self;
+}
+
+- (void)onPublishProgress:(NSInteger)uploadBytes totalBytes:(NSInteger)totalBytes {
+  NSLog(@"onPublishProgress [%ld/%ld]", uploadBytes, totalBytes);
+  NSString *percent = [NSString stringWithFormat:@"%0.0f", (uploadBytes * 1.0)/totalBytes * 100];
+    
+  NSNumber * now = [NSNumber numberWithFloat:((float)uploadBytes/(float)totalBytes)];
+
+  if ([self.uploadProgressConfig shouldReport:now]) {
+        [self.bridge.eventDispatcher
+         sendDeviceEventWithName:EVENT_PROGRESS_UPLOAD
+         body:@{
+                @"taskId": self.taskId,
+                @"written": [NSString stringWithFormat:@"%ld", (long) uploadBytes],
+                @"total": [NSString stringWithFormat:@"%ld", (long) totalBytes],
+                @"percent": percent
+                }
+         ];
+    }
+}
+
+- (void)onPublishComplete:(TXPublishResult*)result {
+  NSLog(@"onPublishComplete [%d/%@]", result.retCode, result.retCode == 0? result.videoURL: result.descMsg);
+    if (result.retCode == 0) {
+      self.callback(@[@{@"videoURL": result.videoURL, @"videoId": result.videoId }, [NSNull null]]);
+    } else {
+      self.callback(@[[NSNull null], result.descMsg]);
+    }
+    self.retainself = nil;
 }
 
 @end

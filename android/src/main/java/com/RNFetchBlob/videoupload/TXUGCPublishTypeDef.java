@@ -1,6 +1,6 @@
 package com.RNFetchBlob.videoupload;
 
-import com.jtexpress.sandstalk.videoupload.impl.IUploadResumeController;
+import com.RNFetchBlob.videoupload.impl.IUploadResumeController;
 
 /**
  * Created by yuejiaoli on 2017/7/19.

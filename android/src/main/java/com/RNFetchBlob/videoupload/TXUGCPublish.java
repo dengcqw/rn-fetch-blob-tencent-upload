@@ -10,12 +10,12 @@ import android.os.Handler;
 import android.text.TextUtils;
 import android.util.Log;
 
-import com.jtexpress.sandstalk.videoupload.impl.TVCClient;
-import com.jtexpress.sandstalk.videoupload.impl.TVCConstants;
-import com.jtexpress.sandstalk.videoupload.impl.TVCUploadInfo;
-import com.jtexpress.sandstalk.videoupload.impl.TVCUploadListener;
-import com.jtexpress.sandstalk.videoupload.impl.TVCUtils;
-import com.jtexpress.sandstalk.videoupload.impl.TXUGCPublishOptCenter;
+import com.RNFetchBlob.videoupload.impl.TVCClient;
+import com.RNFetchBlob.videoupload.impl.TVCConstants;
+import com.RNFetchBlob.videoupload.impl.TVCUploadInfo;
+import com.RNFetchBlob.videoupload.impl.TVCUploadListener;
+import com.RNFetchBlob.videoupload.impl.TVCUtils;
+import com.RNFetchBlob.videoupload.impl.TXUGCPublishOptCenter;
 
 import java.io.File;
 import java.io.FileOutputStream;

@@ -43,6 +43,12 @@
 - (void) enableProgressReport:(NSString * _Nonnull) taskId config:(RNFetchBlobProgress * _Nullable)config;
 - (void) enableUploadProgress:(NSString * _Nonnull) taskId config:(RNFetchBlobProgress * _Nullable)config;
 
+- (void)uploadVideo:(NSDictionary *)dict
+                  taskId:(NSString *)taskId
+              bridge:(RCTBridge * _Nullable)bridgeRef
+           callback:(RCTResponseSenderBlock)callback;
+
+
 
 @end
 

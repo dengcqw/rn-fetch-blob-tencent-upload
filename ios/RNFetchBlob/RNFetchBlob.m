@@ -24,6 +24,7 @@ dispatch_queue_t fsQueue;
 
 #pragma mark RNFetchBlob exported methods
 
+
 @implementation RNFetchBlob
 
 @synthesize filePathPrefix;
@@ -150,6 +151,14 @@ RCT_EXPORT_METHOD(fetchBlob:(NSDictionary *)options
         }
     }];
 }
+
+RCT_EXPORT_METHOD(uploadVideo:(NSDictionary *)dict
+                  taskId:(NSString *)taskId
+                  callback:(RCTResponseSenderBlock)callback) {
+
+    [[RNFetchBlobNetwork sharedInstance] uploadVideo:dict taskId:taskId bridge:self.bridge callback:callback];
+}
+
 
 #pragma mark - fs.createFile
 RCT_EXPORT_METHOD(createFile:(NSString *)path
@@ -649,7 +658,5 @@ RCT_EXPORT_METHOD(emitExpiredEvent:(RCTResponseSenderBlock)callback)
     [RNFetchBlobNetwork emitExpiredTasks];
 }
 
-
-
-
 @end
+

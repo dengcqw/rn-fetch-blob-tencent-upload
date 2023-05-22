@@ -23,9 +23,9 @@ import com.tencent.cos.xml.transfer.TransferConfig;
 import com.tencent.cos.xml.transfer.TransferManager;
 import com.tencent.cos.xml.transfer.TransferState;
 import com.tencent.cos.xml.transfer.TransferStateListener;
-import com.jtexpress.sandstalk.videoupload.TXUGCPublishTypeDef;
-import com.jtexpress.sandstalk.videoupload.impl.compute.TXHttpTaskMetrics;
-import com.jtexpress.sandstalk.videoupload.impl.compute.TXOnGetHttpTaskMetrics;
+import com.RNFetchBlob.videoupload.TXUGCPublishTypeDef;
+import com.RNFetchBlob.videoupload.impl.compute.TXHttpTaskMetrics;
+import com.RNFetchBlob.videoupload.impl.compute.TXOnGetHttpTaskMetrics;
 
 import org.json.JSONException;
 import org.json.JSONObject;

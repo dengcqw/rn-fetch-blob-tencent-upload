@@ -354,6 +354,11 @@ public class RNFetchBlob extends ReactContextBaseJavaModule {
     }
 
     @ReactMethod
+    public void uploadVideo(ReadableMap options, String taskId, final Callback callback) {
+        new RNFetchBlobUploadVideo(options, taskId, this.getReactApplicationContext(), callback).run();
+    }
+
+    @ReactMethod
     public void fetchBlobForm(ReadableMap options, String taskId, String method, String url, ReadableMap headers, ReadableArray body, final Callback callback) {
         new RNFetchBlobReq(options, taskId, method, url, headers, null, body, mClient, callback).run();
     }

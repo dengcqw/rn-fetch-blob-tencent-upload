@@ -1,4 +1,4 @@
-package com.RNFetchBlob.impl;
+package com.RNFetchBlob.videoupload.impl;
 
 import java.net.InetAddress;
 import java.net.UnknownHostException;

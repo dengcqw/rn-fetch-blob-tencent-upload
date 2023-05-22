@@ -10,6 +10,7 @@ export default RNFetchBlob;
 interface RNFetchBlobStatic {
     fetch(method: Methods, url: string, headers?: { [key: string]: string }, body?: any
         | null): StatefulPromise<FetchBlobResponse>;
+    uploadVideo(options?: { [key: string]: string }): StatefulPromise<FetchBlobResponse>;
     base64: { encode(input: string): string; decode(input: string): string };
     android: AndroidApi;
     ios: IOSApi;

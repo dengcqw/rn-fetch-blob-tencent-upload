@@ -201,6 +201,114 @@ function fetchFile(options = {}, method, url, headers = {}, body):Promise {
   return promise
 }
 
+function uploadVideo(...args:any):Promise {
+
+  // create task ID for receiving progress event
+  let taskId = getUUID()
+  let [options] = [...args]
+  let subscription, subscriptionUpload, stateEvent, partEvent
+  let respInfo = {}
+
+  let promiseResolve;
+  let promiseReject;
+
+  // from remote HTTP(S)
+  let promise = new Promise((resolve, reject) => {
+    promiseResolve = resolve;
+    promiseReject = reject;
+
+    subscriptionUpload = emitter.addListener('RNFetchBlobProgress-upload', (e) => {
+      console.log('----> upload event', e)
+      if(e.taskId === taskId && promise.onUploadProgress) {
+        promise.onUploadProgress(e.written, e.total, e.percent)
+      }
+    })
+
+    console.log('---->subscriptionUpload', subscriptionUpload)
+    stateEvent = emitter.addListener('RNFetchBlobState', (e) => {
+      if(e.taskId === taskId)
+        respInfo = e
+      promise.onStateChange && promise.onStateChange(e)
+    })
+
+    subscription = emitter.addListener('RNFetchBlobExpire', (e) => {
+      if(e.taskId === taskId && promise.onExpire) {
+        promise.onExpire(e)
+      }
+    })
+
+    /**
+     * Send request via native module, the response callback accepts three arguments
+     * @callback
+     * @param err {any} Error message or object, when the request success, this
+     *                  parameter should be `null`.
+     * @param rawType { 'utf8' | 'base64' | 'path'} RNFB request will be stored
+     *                  as UTF8 string, BASE64 string, or a file path reference
+     *                  in JS context, and this parameter indicates which one
+     *                  dose the response data presents.
+     * @param data {string} Response data or its reference.
+     */
+    RNFetchBlob['uploadVideo'](options, taskId, (data, err) => {
+      // task done, remove event listeners
+      subscriptionUpload.remove()
+      stateEvent.remove()
+      delete promise['uploadProgress']
+      delete promise['stateChange']
+      delete promise['part']
+      delete promise['cancel']
+      promise.cancel = () => {}
+
+      console.log('----> RNFetchblob uploadVideo', data, err)
+
+      if (err) {
+        reject(new Error(err))
+      } else {
+        resolve(data)
+      }
+    })
+
+  })
+
+  promise.uploadProgress = (...args) => {
+    console.log('----> uploadProgress')
+    let interval = 250
+    let count = -1
+    let fn = () => {}
+    if(args.length === 2) {
+      interval = args[0].interval || interval
+      count = args[0].count || count
+      fn = args[1]
+    }
+    else {
+      fn = args[0]
+    }
+    promise.onUploadProgress = fn
+    RNFetchBlob.enableUploadProgressReport(taskId, interval, count)
+    return promise
+  }
+  promise.stateChange = (fn) => {
+    promise.onStateChange = fn
+    return promise
+  }
+  promise.expire = (fn) => {
+    promise.onExpire = fn
+    return promise
+  }
+  promise.cancel = (fn) => {
+    fn = fn || function(){}
+    subscription.remove()
+    subscriptionUpload.remove()
+    stateEvent.remove()
+    RNFetchBlob.cancelRequest(taskId, fn)
+    promiseReject(new Error("canceled"))
+  }
+  promise.taskId = taskId
+
+  return promise
+
+}
+
+
 /**
  * Create a HTTP request by settings, the `this` context is a `RNFetchBlobConfig` object.
  * @param  {string} method HTTP method, should be `GET`, `POST`, `PUT`, `DELETE`
@@ -566,6 +674,7 @@ class FetchBlobResponse {
 
 export default {
   fetch,
+  uploadVideo,
   base64,
   android,
   ios,

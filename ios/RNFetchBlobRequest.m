@@ -21,6 +21,7 @@ typedef NS_ENUM(NSUInteger, ResponseFormat) {
     AUTO
 };
 
+
 @interface RNFetchBlobRequest ()
 {
     BOOL respFile;
