@@ -39,6 +39,7 @@ public class RNFetchBlobUploadVideo extends BroadcastReceiver implements Runnabl
     }
 
     private void releaseTaskResource() {
+        this.callback = null;
         if(RNFetchBlobUploadVideo.taskTable.containsKey(taskId)) {
             TXUGCPublish publish = RNFetchBlobUploadVideo.taskTable.get(taskId);
             publish.canclePublish();
@@ -78,6 +79,7 @@ public class RNFetchBlobUploadVideo extends BroadcastReceiver implements Runnabl
             @Override
             public void onPublishComplete(TXUGCPublishTypeDef.TXPublishResult result) {
                 Log.d("upload video", "onPublishComplete: " + result.retCode + " Msg:" + (result.retCode == 0 ? result.videoURL : result.descMsg));
+                if (thisRef.get().callback == null) return;
                 if (result.retCode == 0) {
                     WritableMap map = Arguments.createMap();
                     map.putString("videoURL", result.videoURL);
