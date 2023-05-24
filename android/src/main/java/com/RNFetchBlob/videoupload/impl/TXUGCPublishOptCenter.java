@@ -443,12 +443,6 @@ public class TXUGCPublishOptCenter {
      */
     public boolean isNeedEnableQuic(String currentRegion) {
         return false;
-        synchronized (bestCosInfo) {
-            if (TextUtils.isEmpty(currentRegion) || TextUtils.equals(currentRegion, bestCosInfo.region)) {
-                return bestCosInfo.isQuic;
-            }
-            return false;
-        }
     }
 
     public void disableQuicIfNeed() {
