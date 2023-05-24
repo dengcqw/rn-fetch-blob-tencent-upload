@@ -442,6 +442,7 @@ public class TXUGCPublishOptCenter {
      * 否则证明没有使用最优探测结果，使用的默认cos region，没有开启quic
      */
     public boolean isNeedEnableQuic(String currentRegion) {
+        return false;
         synchronized (bestCosInfo) {
             if (TextUtils.isEmpty(currentRegion) || TextUtils.equals(currentRegion, bestCosInfo.region)) {
                 return bestCosInfo.isQuic;
