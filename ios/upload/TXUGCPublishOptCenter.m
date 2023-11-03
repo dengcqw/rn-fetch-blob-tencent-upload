@@ -9,14 +9,11 @@
 #import "TXUGCPublishOptCenter.h"
 #import <Foundation/Foundation.h>
 #import <SystemConfiguration/CaptiveNetwork.h>
-#import <Reachability/Reachability.h>
+#import "AFNetworkReachabilityManager.h"
 #import "TVCClientInner.h"
 #import "TVCCommon.h"
 #import "TVCReport.h"
-#import "AppLocalized.h"
-
-#define PATTERN_IP_V4 @"^(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])(\\.(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])){3}$"
-#define PATTERN_IP_V6 @"^((([0-9A-Fa-f]{1,4}:){7}[0-9A-Fa-f]{1,4})|(([0-9A-Fa-f]{1,4}:){1,7}:)|(([0-9A-Fa-f]{1,4}:){6}:[0-9A-Fa-f]{1,4})|(([0-9A-Fa-f]{1,4}:){5}(:[0-9A-Fa-f]{1,4}){1,2})|(([0-9A-Fa-f]{1,4}:){4}(:[0-9A-Fa-f]{1,4}){1,3})|(([0-9A-Fa-f]{1,4}:){3}(:[0-9A-Fa-f]{1,4}){1,4})|(([0-9A-Fa-f]{1,4}:){2}(:[0-9A-Fa-f]{1,4}){1,5})|([0-9A-Fa-f]{1,4}:(:[0-9A-Fa-f]{1,4}){1,6})|(:(:[0-9A-Fa-f]{1,4}){1,7})|(([0-9A-Fa-f]{1,4}:){6}(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])(\\.(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])){3})|(([0-9A-Fa-f]{1,4}:){5}:(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])(\\.(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])){3})|(([0-9A-Fa-f]{1,4}:){4}(:[0-9A-Fa-f]{1,4}){0,1}:(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])(\\.(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])){3})|(([0-9A-Fa-f]{1,4}:){3}(:[0-9A-Fa-f]{1,4}){0,2}:(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])(\\.(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])){3})|(([0-9A-Fa-f]{1,4}:){2}(:[0-9A-Fa-f]{1,4}){0,3}:(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])(\\.(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])){3})|([0-9A-Fa-f]{1,4}:(:[0-9A-Fa-f]{1,4}){0,4}:(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])(\\.(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])){3})|(:(:[0-9A-Fa-f]{1,4}){0,5}:(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])(\\.(\\d|[1-9]\\d|1\\d{2}|2[0-4]\\d|25[0-5])){3}))$"
+#import "QuicClient.h"
 
 #define HTTPDNS_SERVER @"https://119.29.29.99/d?dn="  // httpdns服务器
 #define HTTPDNS_TOKEN @"800654663"
@@ -25,7 +22,6 @@ typedef void (^TXUGCCompletion)(int result);
 typedef void (^TXUGCHttpCompletion)(NSData *_Nullable data, int errCode);
 
 static TXUGCPublishOptCenter *_shareInstance = nil;
-
 
 @implementation TXUGCCosRegionInfo
 
@@ -59,10 +55,7 @@ static TXUGCPublishOptCenter *_shareInstance = nil;
         _isStarted = NO;
         _signature = @"";
         _cosRegionInfo = [[TXUGCCosRegionInfo alloc] init];
-        _reachability = [Reachability reachabilityWithAddress:@"https://www.baidu.com/"];
         [self monitorNetwork];
-        _regexIpv4 = [NSRegularExpression regularExpressionWithPattern:PATTERN_IP_V4 options:0 error:nil];
-        _regexIpv6 = [NSRegularExpression regularExpressionWithPattern:PATTERN_IP_V6 options:0 error:nil];
     }
     return self;
 }
@@ -158,33 +151,13 @@ static TXUGCPublishOptCenter *_shareInstance = nil;
                  NSString *ips = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
                  NSLog(@"httpdns domain[%@] ips[%@]", domain, ips);
 
-                NSArray *ipLists = [ips componentsSeparatedByString:@";"];
-                NSMutableArray *ipMutableLists = [[NSMutableArray alloc] init];
-                for(int i = 0; i < ipLists.count; i++) {
-                    NSString *ipStr = ipLists[i];
-                    if([self checkIPAddreddIsValid:ipStr]) {
-                        NSLog(@"httpdns domain[%@] addIps[%@]", domain, ipStr);
-                        [ipMutableLists addObject:ipStr];
-                    }
-                }
-                [self setCacheValue:domain ipLists:ipMutableLists];
+                 NSArray *ipLists = [ips componentsSeparatedByString:@";"];
+                [self setCacheValue:domain ipLists:ipLists];
 
                  if (completion) {
                      completion(errCode);
                  }
                }];
-}
-
-/**
- 判断ip地址是否有效
- */
-- (BOOL)checkIPAddreddIsValid:(NSString*)ipAddress
-{
-    if (ipAddress.length == 0) {
-        return NO;
-    }
-    return [self.regexIpv4 firstMatchInString:ipAddress options:0 range:NSMakeRange(0, [ipAddress length])] ||
-    [self.regexIpv6 firstMatchInString:ipAddress options:0 range:NSMakeRange(0, [ipAddress length])];
 }
 
 // 由于NSMutableDictionary不是线程安全的，这里单独起一个加锁方法
@@ -196,19 +169,28 @@ static TXUGCPublishOptCenter *_shareInstance = nil;
 
 //监控网络接入变化
 - (void)monitorNetwork {
-  //网络切换的时候刷新一下httpdns
-  __weak __typeof(self) weakSelf = self;
-  _reachability.reachableBlock = ^(Reachability *reach) {
-    __strong __typeof(weakSelf) self = weakSelf;
-    if ([reach isReachableViaWiFi]) {
-      NSLog(@"WiFi");
-      [self reFresh:nil];
-    }
-    if ([reach isReachableViaWWAN]) {
-      NSLog(@"3G|4G");
-      [self reFresh:nil];
-    }
-  };
+    //网络切换的时候刷新一下httpdns
+    [[AFNetworkReachabilityManager sharedManager] setReachabilityStatusChangeBlock:^(AFNetworkReachabilityStatus status) {
+        switch (status) {
+            case AFNetworkReachabilityStatusUnknown:
+                NSLog(@"Unknown");
+                break;
+            case AFNetworkReachabilityStatusNotReachable:
+                NSLog(@"%No network");
+                break;
+            case AFNetworkReachabilityStatusReachableViaWWAN:
+                NSLog(@"3G|4G");
+                [self reFresh:nil];
+                break;
+            case AFNetworkReachabilityStatusReachableViaWiFi:
+                NSLog(@"WiFi");
+                [self reFresh:nil];
+                break;
+            default:
+                break;
+        }
+
+    }];
 }
 
 // 添加指定域名的ip列表，ip列表是后台返回的
@@ -368,8 +350,8 @@ static TXUGCPublishOptCenter *_shareInstance = nil;
               if (self) {
                   if (region.length > 0 && domain.length > 0) {
                       [self getCosDNS:domain ips:ips];
-                      [self quicTest:domain region:region];
                       [self detectBestCosIP:domain region:region];
+                      [self quicTest:domain region:region];
                   }
               }
             }];
@@ -382,7 +364,8 @@ static TXUGCPublishOptCenter *_shareInstance = nil;
         (isRegionEmpty ? @""
                        : [NSString stringWithFormat:@"%@|%@", self.cosRegionInfo.region,
                                                     self.cosRegionInfo.domain]);
- 
+    [QuicClient shareQuicClient].region = self.cosRegionInfo.region;
+    [QuicClient shareQuicClient].isQuic = self.cosRegionInfo.isQuic;
     [self reportPublishOptResult:TVC_UPLOAD_EVENT_ID_DETECT_DOMAIN_RESULT
                          errCode:(isRegionEmpty ? 1 : 0)errMsg:errMsg
                          reqTime:reqTime
@@ -511,6 +494,19 @@ static TXUGCPublishOptCenter *_shareInstance = nil;
 //quic探测
 -(void)quicTest:(NSString *)domain
          region:(NSString *)region{
+    NSArray* tmp = [self.cacheMap valueForKey:domain];
+    if (tmp != nil && tmp.count > 0) {
+        NSString* ip = [tmp objectAtIndex:0];
+        _quicClient = [QuicClient new];
+        [_quicClient sendQuicRequest:domain ip:ip region:region
+        completion:^(UInt64 cosTs,NSString* domain,NSString* region,BOOL isQuic){
+            if (isQuic) {
+                @synchronized(self->_cosRegionInfo) {
+                    [self comparisonTime:cosTs region:region domain:domain isQuic:YES];
+                }
+            }
+        }];
+    }
 }
 
 @end

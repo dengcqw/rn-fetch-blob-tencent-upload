@@ -36,6 +36,15 @@ typedef NS_ENUM(NSInteger, TXPublishEventCode)
     TVC_UPLOAD_EVENT_ID_DETECT_DOMAIN_RESULT              =   11003,          //检测最优园区结果(包含cos iplist)
 };
 
+@interface TVCConfig : NSObject
+@property (nonatomic, strong) NSString *signature;
+//超时时间，默认8秒
+@property (nonatomic, assign) NSTimeInterval timeoutInterval;
+@property (nonatomic, assign) BOOL enableHttps;
+@property (nonatomic, strong) NSString *userID;
+@property (nonatomic, assign) BOOL enableResume;
+@end
+
 @interface TVCUploadParam : NSObject
 //视频本地路径
 @property (nonatomic, strong) NSString *videoPath;

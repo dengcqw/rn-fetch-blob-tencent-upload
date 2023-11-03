@@ -1,10 +1,10 @@
 #import "TXUGCPublish.h"
 #import "TVCHeader.h"
+//#import "log.h"
+//#import "TXRTMPAPI.h"
 #import "TVCClient.h"
 #import "TXUGCPublishOptCenter.h"
 #import "TXUGCPublishUtil.h"
-#import "UploadResumeDefaultController.h"
-#import "TVCConfig.h"
 
 #undef _MODULE_
 #define _MODULE_ "TXUGCPublish"
@@ -77,14 +77,7 @@
     _tvcConfig.enableHttps = param.enableHTTPS;
     _tvcConfig.userID = _userID;
     _tvcConfig.enableResume = param.enableResume;
-    _tvcConfig.sliceSize = param.sliceSize;
-    _tvcConfig.concurrentCount = param.concurrentCount;
     //_tvcConfig.cosRegion = param.cosRegion;
-    if(param.uploadResumController != nil) {
-        _tvcConfig.uploadResumController = param.uploadResumController;
-    } else {
-        _tvcConfig.uploadResumController = [[UploadResumeDefaultController alloc] init];
-    }
 
     _tvcParam = [[TVCUploadParam alloc] init];
 
@@ -99,7 +92,6 @@
     if (_tvcClient == nil) {
         _tvcClient = [[TVCClient alloc] initWithConfig:_tvcConfig];
     } else {
-        [_tvcClient updateConfig:_tvcConfig];
         [[TXUGCPublishOptCenter shareInstance] updateSignature:param.signature];
     }
 
@@ -194,8 +186,6 @@
     _tvcConfig.enableHttps = param.enableHTTPS;
     _tvcConfig.userID = _userID;
     _tvcConfig.enableResume = param.enableResume;
-    _tvcConfig.sliceSize = param.sliceSize;
-    _tvcConfig.concurrentCount = param.concurrentCount;
     //_tvcConfig.cosRegion = param.cosRegion;
 
     _tvcParam = [[TVCUploadParam alloc] init];
@@ -207,12 +197,7 @@
     _tvcParam.videoName = param.fileName;
 
     __weak __typeof(self) weakSelf = self;
-    if (_tvcClient == nil) {
-        _tvcClient = [[TVCClient alloc] initWithConfig:_tvcConfig];
-    } else {
-        [_tvcClient updateConfig:_tvcConfig];
-        [[TXUGCPublishOptCenter shareInstance] updateSignature:param.signature];
-    }
+    _tvcClient = [[TVCClient alloc] initWithConfig:_tvcConfig];
     [_tvcClient uploadVideo:_tvcParam
         result:^(TVCUploadResponse *resp) {
           __strong __typeof(weakSelf) self = weakSelf;

@@ -21,7 +21,7 @@
 #define kMessage        @"message"
 #define kData           @"data"
 
-#define TVCVersion @"1.1.8.0"
+#define TVCVersion @"1.1.1.0"
 
 #pragma mark - COS config
 //字段废弃，作为InitUploadUGC的占位字段
@@ -179,20 +179,5 @@
 @property(nonatomic,assign) BOOL reporting;
 
 @property(nonatomic,strong) NSString * requestId;
-
-@end
-
-/**
- 续点缓存
- */
-@interface ResumeCacheData : NSObject
-// 上传session
-@property(nonatomic,strong) NSString * vodSessionKey;
-// cos分片上传resumeData
-@property(nonatomic,strong) NSData * resumeData;
-// 文件最后修改时间
-@property(atomic,assign) uint64_t videoLastModTime;
-// 封面最后修改时间
-@property(atomic,assign) uint64_t coverLastModTime;
 
 @end

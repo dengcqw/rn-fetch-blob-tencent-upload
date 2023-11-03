@@ -8,6 +8,20 @@
 
 #import "TVCCommon.h"
 
+@implementation TVCConfig
+
+- (instancetype)init
+{
+    self = [super init];
+    if (self) {
+        _signature = @"";
+        _userID = @"";
+    }
+    return self;
+}
+
+@end
+
 @implementation TVCUploadParam
 
 - (instancetype)init

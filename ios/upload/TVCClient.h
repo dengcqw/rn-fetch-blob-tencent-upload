@@ -9,8 +9,6 @@
 #import <Foundation/Foundation.h>
 #import "TVCCommon.h"
 
-@class TVCConfig;
-
 @interface TVCClient : NSObject
 
 /**
@@ -50,9 +48,4 @@
  * 作用是方便定位上传过程中出现的问题
  */
 - (void)setAppId:(int)appId;
-
-/**
- 更新配置
- */
-- (void)updateConfig:(TVCConfig *)config;
 @end

@@ -3,7 +3,6 @@
 
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
-#import "IUploadResumeController.h"
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -45,19 +44,13 @@ typedef NS_ENUM(NSInteger, TXPublishResultCode)
 ///videoPath
 @property (nonatomic, strong) NSString*             videoPath;            
 ///视频名称，不填的话取本地文件名
-@property (nonatomic, strong) NSString*             fileName;
-///续点控制器，可自定义对于续点的控制，默认创建UploadResumeDefaultController
-@property (nonatomic, strong) id<IUploadResumeController>  uploadResumController;
+@property (nonatomic, strong) NSString*             fileName;             
 ///开启HTTPS，默认关闭
 @property (nonatomic, assign) BOOL                  enableHTTPS;          
 ///开启断点续传，默认开启
 @property (nonatomic, assign) BOOL                  enableResume;  
 ///是否开启预上传机制，默认开启，备注：预上传机制可以大幅提升文件的上传质量
-@property (nonatomic, assign) BOOL                  enablePreparePublish;
-/// 分片大小,支持最小为1M,最大10M，默认0，代表上传文件大小除以10
-@property (nonatomic, assign) long                  sliceSize;
-/// 分片上传并发数量，<=0 则表示SDK内部默认为2个
-@property (nonatomic, assign) int                   concurrentCount;
+@property (nonatomic, assign) BOOL                  enablePreparePublish;      
 @end
 
 /**
@@ -116,12 +109,7 @@ typedef NS_ENUM(NSInteger, TXMediaPublishResultCode)
 @property (nonatomic, assign) BOOL                  enableResume;
 ///是否开启预上传机制，默认开启，备注：预上传机制可以大幅提升文件的上传质量
 @property (nonatomic, assign) BOOL                  enablePreparePublish;
-/// 分片大小,支持最小为1M,最大10M，默认0，代表上传文件大小除以10
-@property (nonatomic, assign) long                  sliceSize;
-/// 分片上传并发数量，<=0 则表示SDK内部默认为2个
-@property (nonatomic, assign) int                   concurrentCount;
-///续点控制器，可自定义对于续点的控制，默认创建UploadResumeDefaultController
-@property (nonatomic, strong) id<IUploadResumeController>  uploadResumController;
+
 @end
 
 

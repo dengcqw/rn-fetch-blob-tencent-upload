@@ -112,18 +112,3 @@
 }
 
 @end
-
-@implementation ResumeCacheData
-
-- (instancetype)init
-{
-    if (self = [super init]) {
-        self.resumeData = nil;
-        self.vodSessionKey = nil;
-        self.videoLastModTime = 0;
-        self.coverLastModTime = 0;
-    }
-    return self;
-}
-
-@end

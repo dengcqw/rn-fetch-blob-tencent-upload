@@ -20,7 +20,9 @@
 #include <netdb.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#import "TVCConfig.h"
+#import "QuicClient.h"
+#import "QCloudQuicConfig.h"
+//#import "TXRTMPAPI.h"
 
 #define TVCMultipartResumeSessionKey        @"TVCMultipartResumeSessionKey"         // 点播vodSessionKey
 #define TVCMultipartResumeExpireTimeKey     @"TVCMultipartResumeExpireTimeKey"      // vodSessionKey过期时间
@@ -32,31 +34,20 @@
 
 #define VIRTUAL_TOTAL_PERCENT               10
 
-// slice constant
-#define SLICE_SIZE_MIN                      1024 * 1024
-#define SLICE_SIZE_MAX                      1024 * 1024 * 10
-#define SLICE_SIZE_ADAPTATION               0
-
 @interface TVCClient () <QCloudSignatureProvider, NSURLSessionTaskDelegate>
 @property (nonatomic, strong) TVCConfig *config;
 @property (nonatomic, strong) QCloudAuthentationV5Creator *creator;
 @property (nonatomic, strong) NSString *reqKey;
 @property(nonatomic, strong) NSString* uploadKey;
+@property(nonatomic, strong) NSString* saveVodSessionKey;
+@property(nonatomic, strong) TVCUploadContext *savaUploadContext;
 @property (nonatomic, strong) NSString *serverIP;
 @property (nonatomic, strong) QCloudCOSXMLUploadObjectRequest *uploadRequest;
-// 上传节点信息
-@property (nonatomic, strong) TVCUploadContext *uploadContext;
 @property (nonatomic, strong) TVCReportInfo *reportInfo;
 @property (nonatomic, strong) NSURLSession *session;
 @property (nonatomic, weak) NSTimer *timer;
 @property (atomic, assign) int virtualPercent;
 @property (atomic, assign) BOOL realProgressFired;
-@property(nonatomic, strong) NSString* saveVodSessionKey;
-@property(nonatomic, strong) TVCUploadContext *savaUploadContext;
-// 当前上传续点视频文件的最后修改时间
-@property(atomic,assign) uint64_t videoLastModTime;
-// 当前上传续点视频封面文件的最后修改时间
-@property(atomic,assign) uint64_t coverLastModTime;
 @end
 
 @implementation TVCClient
@@ -76,35 +67,8 @@
         self.timer = nil;
         self.virtualPercent = 0;
         self.realProgressFired = NO;
-        self.videoLastModTime = 0;
-        self.coverLastModTime = 0;
-        // sdk最小1M,最大10M，如果不设置，置为0，则为文件大小的十分之一
-        if (config.sliceSize == 0) {
-            self.config.sliceSize = SLICE_SIZE_ADAPTATION;
-        } else {
-            self.config.sliceSize = [self fixSliceSize:config.sliceSize];
-        }
     }
     return self;
-}
-
-- (void)updateConfig:(TVCConfig *)config {
-    self.config = config;
-    // sdk最小1M,最大10M，如果不设置，置为0，则为文件大小的十分之一
-    if (config.sliceSize == 0) {
-        self.config.sliceSize = SLICE_SIZE_ADAPTATION;
-    } else {
-        self.config.sliceSize = [self fixSliceSize:config.sliceSize];
-    }
-}
-
-- (long)fixSliceSize:(long)sliceSize {
-    if (sliceSize < SLICE_SIZE_MIN) {
-        sliceSize = SLICE_SIZE_MIN;
-    } else if (sliceSize > SLICE_SIZE_MAX) {
-        sliceSize = SLICE_SIZE_MAX;
-    }
-    return sliceSize;
 }
 
 - (void)uploadVideo:(TVCUploadParam *)param result:(TVCResultBlock)result progress:(TVCProgressBlock)progress {
@@ -128,7 +92,6 @@
 
     // init upload context;
     TVCUploadContext *uploadContext = [[TVCUploadContext alloc] init];
-    self.uploadContext = uploadContext;
     uploadContext.uploadParam = param;
     uploadContext.resultBlock = result;
     uploadContext.progressBlock = progress;
@@ -221,13 +184,10 @@
 - (BOOL)cancleUploadVideo {
     if (self.uploadRequest) {
         NSError *error;
-        NSData* resumeData = [self.uploadRequest cancelByProductingResumeData:&error];
+        [self.uploadRequest cancelByProductingResumeData:&error];
         if (error) {
             return NO;
         } else {
-            [self setSession:self.uploadContext.cugResult.uploadSession resumeData:resumeData lastModTime:self.uploadContext.videoLastModTime
-                coverLastModTime:self.uploadContext.coverLastModTime
-                    withFilePath:self.uploadContext.uploadParam.videoPath];
             return YES;
         }
     }
@@ -687,9 +647,7 @@
 
     // 2.开始上传
     uploadContext.reqTime = [[NSDate date] timeIntervalSince1970] * 1000;
-    if ([self.config.uploadResumController isResumeUploadVideo:uploadContext
-                                                withSessionKey:vodSessionKey withFileModTime:self.videoLastModTime
-                                              withCoverModTime:self.coverLastModTime]) {
+    if (vodSessionKey && vodSessionKey.length) {
         [self commitCosUpload:uploadContext withResumeUpload:YES];
     } else {
         [self commitCosUpload:uploadContext withResumeUpload:NO];
@@ -723,6 +681,22 @@
 
     QCloudServiceConfiguration *configuration = [QCloudServiceConfiguration new];
     
+    /**
+    判断上传的region和竞速出来的region是否一致，用来打开quic的开关
+    */
+    if([uploadContext.cugResult.uploadRegion isEqualToString:[QuicClient shareQuicClient].region] && [QuicClient shareQuicClient].isQuic){
+        NSLog(@"---->使用quic");
+        configuration.enableQuic = true;
+        [QCloudQuicConfig shareConfig].race_type = QCloudRaceTypeOnlyQUIC;
+        [QCloudQuicConfig shareConfig].is_custom = NO;
+        [QCloudQuicConfig shareConfig].port = 443;
+    }else{
+        NSLog(@"---->使用http");
+        configuration.enableQuic = false;
+        [QCloudQuicConfig shareConfig].port = 80;
+        [QCloudQuicConfig shareConfig].race_type = QCloudRaceTypeOnlyHTTP;
+    }
+
     configuration.appID = uploadContext.cugResult.uploadAppid;
     configuration.signatureProvider = self;
 
@@ -751,27 +725,11 @@
 
     endpoint.useHTTPS = self.config.enableHttps;
     configuration.endpoint = endpoint;
-    if(self.config.concurrentCount > 0) {
-        [QCloudHTTPSessionManager shareClient].customConcurrentCount = self.config.concurrentCount;
-    }
     
     if(![QCloudCOSXMLService hasServiceForKey:self.uploadKey]){
         [QCloudCOSXMLService registerCOSXMLWithConfiguration:configuration withKey:self.uploadKey];
         [QCloudCOSTransferMangerService registerCOSTransferMangerWithConfiguration:configuration withKey:self.uploadKey];
     }
-}
-
-- (long)getSliceSize:(uint64_t)videoSize {
-    long sliceSize = self.config.sliceSize;
-    if (sliceSize == SLICE_SIZE_ADAPTATION) {
-         if (videoSize > 0) {
-             sliceSize = [self fixSliceSize:videoSize / 10];
-         } else {
-             NSLog(@"file size invalid,set sliceSize to SLICE_SIZE_MIN");
-             sliceSize = SLICE_SIZE_MIN;
-         }
-     }
-     return sliceSize;
 }
 
 - (void)commitCosUpload:(TVCUploadContext *)uploadContext withResumeUpload:(BOOL)isResumeUpload {
@@ -794,68 +752,206 @@
     if (uploadContext.isUploadVideo) {
         dispatch_group_async(group, queue, ^{
             QCloudCOSXMLUploadObjectRequest *videoUpload;
-
-            if (uploadContext.resumeData != nil && uploadContext.resumeData.length != 0) {
-                videoUpload = [QCloudCOSXMLUploadObjectRequest requestWithRequestData:uploadContext.resumeData];
-            } else {
-                videoUpload = [QCloudCOSXMLUploadObjectRequest new];
+            
+            videoUpload = (uploadContext.resumeData != nil &&
+                           uploadContext.resumeData.length != 0) ?
+            [QCloudCOSXMLUploadObjectRequest requestWithRequestData:
+             uploadContext.resumeData] : [QCloudCOSXMLUploadObjectRequest new];
+            
+//            if (uploadContext.resumeData != nil && uploadContext.resumeData.length != 0)
+//                videoUpload = [QCloudCOSXMLUploadObjectRequest requestWithRequestData:uploadContext.resumeData];
+//            else {
+//                videoUpload = [QCloudCOSXMLUploadObjectRequest new];
                 videoUpload.body = [NSURL fileURLWithPath:param.videoPath];
                 videoUpload.bucket = cug.uploadBucket;
                 videoUpload.object = cug.videoPath;
-                videoUpload.sliceSize = [self getSliceSize:uploadContext.videoSize];
 
                 [videoUpload setRequstsMetricArrayBlock:^(NSMutableArray *requstMetricArray) {
-                    if ([requstMetricArray count] > 0 && [requstMetricArray[0] isKindOfClass:[NSDictionary class]]) {
-                        if ([[requstMetricArray[0] allValues] count] > 0) {
-                            NSDictionary *dic = [requstMetricArray[0] allValues][0];
-                            tcpConenctionTimeCost = ([dic[@"kDnsLookupTookTime"] doubleValue] + [dic[@"kConnectTookTime"] doubleValue] +
-                                                        [dic[@"kSignRequestTookTime"] doubleValue])
-                                                    * 1000;
-                            recvRspTimeCost = ([dic[@"kTaskTookTime"] doubleValue] + [dic[@"kReadResponseHeaderTookTime"] doubleValue] +
-                                                  [dic[@"kReadResponseBodyTookTime"] doubleValue])
-                                              * 1000;
-                        }
-                    }
+                    if ([requstMetricArray count] > 0 &&
+                        [requstMetricArray[0] isKindOfClass:[NSDictionary class]] &&
+                        [[requstMetricArray[0] allValues] count] > 0) {
+                        NSDictionary *dic = [requstMetricArray[0] allValues][0];
+                        tcpConenctionTimeCost = ([dic[@"kDnsLookupTookTime"] doubleValue] + [dic[@"kConnectTookTime"] doubleValue] +
+                                                    [dic[@"kSignRequestTookTime"] doubleValue])
+                                                * 1000;
+                        recvRspTimeCost = ([dic[@"kTaskTookTime"] doubleValue] + [dic[@"kReadResponseHeaderTookTime"] doubleValue] +
+                                              [dic[@"kReadResponseBodyTookTime"] doubleValue])
+                                          * 1000;                    }
                 }];
 
                 [videoUpload setInitMultipleUploadFinishBlock:^(
                     QCloudInitiateMultipartUploadResult *multipleUploadInitResult, QCloudCOSXMLUploadObjectResumeData resumeData) {
-                    if (multipleUploadInitResult != nil && resumeData != nil) {
+                    if (multipleUploadInitResult != nil && resumeData != nil)
                         [self setSession:cug.uploadSession resumeData:resumeData lastModTime:uploadContext.videoLastModTime
                             coverLastModTime:uploadContext.coverLastModTime
                                 withFilePath:param.videoPath];
-                    }
                 }];
-            }
+//            }
 
             [videoUpload setFinishBlock:^(QCloudUploadObjectResult *result, NSError *error) {
                 NSLog(@"uploadCosVideo finish : cosBucket:%@ ,cos videoPath:%@, path:%@, size:%lld", cug.uploadBucket, cug.videoPath, param.videoPath,
                     uploadContext.videoSize);
                 reqTimeCost = [[NSDate date] timeIntervalSince1970] * 1000 - uploadContext.reqTime;
-                
-                [self handleUploadBlock:result withError:error withContext:uploadContext
-                                withCug:cug withTcpTimeOut:tcpConenctionTimeCost withRspTime:recvRspTimeCost];
-            }];
+                NSString *requestId = [result.__originHTTPURLResponse__.allHeaderFields objectForKey:@"x-cos-request-id"];
 
-            TVCProgressBlock progress = uploadContext.progressBlock;
-            [videoUpload setSendProcessBlock:^(int64_t bytesSent, int64_t totalBytesSent, int64_t totalBytesExpectedToSend) {
-                if (!ws.realProgressFired) {
-                    [ws.timer setFireDate:[NSDate distantFuture]];
-                    ws.realProgressFired = YES;
-                }
+                if (error) {
+                    /**
+                    quic上传失败，使用http上传
+                     */
+                    if ([QuicClient shareQuicClient].isQuic) {
+                        [QuicClient shareQuicClient].isQuic = NO;
+                        [self applyUploadUGC:self.savaUploadContext withVodSessionKey:self.saveVodSessionKey];
+                        return;
+                    }
+                    NSString *errInfo = error.userInfo == nil ?
+                    error.description : error.userInfo.description;
+                    NSString *cosErrorCode = @"";
+                    cosErrorCode = [NSString stringWithFormat:@"%d", error.code];
 
-                if (progress) {
-                    uint64_t total = uploadContext.videoSize + uploadContext.coverSize;
-                    uploadContext.currentUpload = totalBytesSent;
-                    if (uploadContext.currentUpload > total) {
-                        uploadContext.currentUpload = total;
-                        ws.virtualPercent = 100 - VIRTUAL_TOTAL_PERCENT;
-                        [ws.timer setFireDate:[NSDate date]];  //上传完成，启动结束虚拟进度
+                    // 取消的情况不清除session缓存，错误码定义见 https://cloud.tencent.com/document/product/436/30443
+                    if (error.code == 30000) {
+                        uploadContext.lastStatus = TVC_ERR_USER_CANCLE;
+                        uploadContext.desc = [NSString stringWithFormat:@"upload video, user cancled"];
+
+                        [ws txReport:TVC_UPLOAD_EVENT_ID_COS errCode:TVC_ERR_USER_CANCLE vodErrCode:0 cosErrCode:cosErrorCode errInfo:errInfo
+                                        reqTime:uploadContext.reqTime
+                                    reqTimeCost:reqTimeCost
+                                         reqKey:ws.reqKey
+                                          appId:cug.userAppid
+                                       fileSize:uploadContext.videoSize
+                                       fileType:[ws getFileType:uploadContext.uploadParam.videoPath]
+                                       fileName:[ws getFileName:uploadContext.uploadParam.videoPath]
+                                     sessionKey:cug.uploadSession
+                                         fileId:@""
+                                      cosRegion:cug.uploadRegion
+                                      useCosAcc:cug.useCosAcc
+                                   cosRequestId:requestId
+                             cosTcpConnTimeCost:tcpConenctionTimeCost
+                            cosRecvRespTimeCost:recvRspTimeCost];
                     } else {
-                        progress(uploadContext.currentUpload * (100 - 2 * VIRTUAL_TOTAL_PERCENT) / 100 + VIRTUAL_TOTAL_PERCENT * total / 100, total);
+                        uploadContext.lastStatus = TVC_ERR_VIDEO_UPLOAD_FAILED;
+                        uploadContext.desc = [NSString stringWithFormat:@"upload video, cos code:%d, cos desc:%@", error.code, error.description];
+                        //网络断开，不清除session缓存
+                        [ws netError:error.code videoPath:param.videoPath];
+//                        if (error.code != -1009) {
+//                            [ws setSession:nil resumeData:nil lastModTime:0 withFilePath:param.videoPath];
+//                        }
+
+                        [ws txReport:TVC_UPLOAD_EVENT_ID_COS errCode:TVC_ERR_VIDEO_UPLOAD_FAILED vodErrCode:0 cosErrCode:cosErrorCode errInfo:errInfo
+                                        reqTime:uploadContext.reqTime
+                                    reqTimeCost:reqTimeCost
+                                         reqKey:ws.reqKey
+                                          appId:cug.userAppid
+                                       fileSize:uploadContext.videoSize
+                                       fileType:[ws getFileType:uploadContext.uploadParam.videoPath]
+                                       fileName:[ws getFileName:uploadContext.uploadParam.videoPath]
+                                     sessionKey:cug.uploadSession
+                                         fileId:@""
+                                      cosRegion:cug.uploadRegion
+                                      useCosAcc:cug.useCosAcc
+                                   cosRequestId:requestId
+                             cosTcpConnTimeCost:tcpConenctionTimeCost
+                            cosRecvRespTimeCost:recvRspTimeCost];
+                    }
+                    dispatch_semaphore_signal(semaphore);
+                    if (uploadContext.isUploadCover) dispatch_semaphore_signal(semaphore);
+                } else {
+                    NSLog(@"upload video succ");
+                    //视频上传完成，上报视频上传信息，清除session缓存
+                    [ws txReport:TVC_UPLOAD_EVENT_ID_COS errCode:0 vodErrCode:0 cosErrCode:@"" errInfo:@"" reqTime:uploadContext.reqTime
+                                reqTimeCost:reqTimeCost
+                                     reqKey:ws.reqKey
+                                      appId:cug.userAppid
+                                   fileSize:uploadContext.videoSize
+                                   fileType:[ws getFileType:uploadContext.uploadParam.videoPath]
+                                   fileName:[ws getFileName:uploadContext.uploadParam.videoPath]
+                                 sessionKey:cug.uploadSession
+                                     fileId:@""
+                                  cosRegion:cug.uploadRegion
+                                  useCosAcc:cug.useCosAcc
+                               cosRequestId:requestId
+                         cosTcpConnTimeCost:tcpConenctionTimeCost
+                        cosRecvRespTimeCost:recvRspTimeCost];
+                    [ws setSession:nil resumeData:nil lastModTime:0 withFilePath:param.videoPath];
+                    // 2-2.开始上传封面
+                    if (uploadContext.isUploadCover) {
+                        uploadContext.reqTime = [[NSDate date] timeIntervalSince1970] * 1000;
+
+                        QCloudCOSXMLUploadObjectRequest *coverUpload = [QCloudCOSXMLUploadObjectRequest new];
+                        coverUpload.body = [NSURL fileURLWithPath:param.coverPath];
+                        coverUpload.bucket = cug.uploadBucket;
+                        coverUpload.object = cug.imagePath;
+
+                        __block uint64_t tcpConenctionTimeCost = 0;
+                        __block uint64_t recvRspTimeCost = 0;
+
+                        [coverUpload setRequstsMetricArrayBlock:^(NSMutableArray *requstMetricArray) {
+                            if ([requstMetricArray count] > 0 &&
+                                [requstMetricArray[0] isKindOfClass:[NSDictionary class]] &&
+                                [[requstMetricArray[0] allValues] count] > 0) {
+                                NSDictionary *dic = [requstMetricArray[0] allValues][0];
+                                tcpConenctionTimeCost = ([dic[@"kDnsLookupTookTime"] doubleValue] + [dic[@"kConnectTookTime"] doubleValue] +
+                                                            [dic[@"kSignRequestTookTime"] doubleValue])
+                                                        * 1000;
+                                recvRspTimeCost = ([dic[@"kTaskTookTime"] doubleValue] + [dic[@"kReadResponseHeaderTookTime"] doubleValue] +
+                                                      [dic[@"kReadResponseBodyTookTime"] doubleValue])
+                                                  * 1000;
+                            }
+                        }];
+
+                        [coverUpload setFinishBlock:^(QCloudUploadObjectResult *result, NSError *error) {
+                            NSString *cosErrorCode = @"";
+                            NSString *requestId = [result.__originHTTPURLResponse__.allHeaderFields objectForKey:@"x-cos-request-id"];
+
+                            if (error) {
+                                // 2-2步骤出错
+                                NSLog(@"upload cover fail : %d", error.code);
+                                NSString *errInfo = error.userInfo == nil ?
+                                error.description : error.userInfo.description;
+                                cosErrorCode = [NSString stringWithFormat:@"%d", error.code];
+                                
+                                [self setContext:uploadContext error:error cosErrorCode:cosErrorCode errInfo:errInfo];
+
+//                                if (error.code == 30000) {
+//                                    uploadContext.lastStatus = TVC_ERR_USER_CANCLE;
+//                                    uploadContext.desc = [NSString stringWithFormat:@"upload cover, user cancled"];
+//                                } else {
+//                                    uploadContext.lastStatus = TVC_ERR_COVER_UPLOAD_FAILED;
+//                                    uploadContext.desc = [NSString stringWithFormat:@"upload cover, cos code:%@, cos desc:%@", cosErrorCode, errInfo];
+//                                }
+                            } else
+                                NSLog(@"upload cover succ");
+                            reqTimeCost = [[NSDate date] timeIntervalSince1970] * 1000 - uploadContext.reqTime;
+                            [ws txReport:TVC_UPLOAD_EVENT_ID_COS errCode:uploadContext.lastStatus vodErrCode:0 cosErrCode:cosErrorCode
+                                            errInfo:uploadContext.desc
+                                            reqTime:uploadContext.reqTime
+                                        reqTimeCost:reqTimeCost
+                                             reqKey:ws.reqKey
+                                              appId:cug.userAppid
+                                           fileSize:uploadContext.coverSize
+                                           fileType:[ws getFileType:uploadContext.uploadParam.coverPath]
+                                           fileName:[ws getFileName:uploadContext.uploadParam.coverPath]
+                                         sessionKey:cug.uploadSession
+                                             fileId:@""
+                                          cosRegion:cug.uploadRegion
+                                          useCosAcc:cug.useCosAcc
+                                       cosRequestId:requestId
+                                 cosTcpConnTimeCost:tcpConenctionTimeCost
+                                cosRecvRespTimeCost:recvRspTimeCost];
+                            dispatch_semaphore_signal(semaphore);
+                        }];
+                        
+                        [self setCoverUploadProgress:uploadContext coverUpload:coverUpload ws:ws];
+
+                        ws.uploadRequest = coverUpload;
+                        [[QCloudCOSTransferMangerService costransfermangerServiceForKey:self.uploadKey] UploadObject:coverUpload];
                     }
                 }
+                dispatch_semaphore_signal(semaphore);
             }];
+            
+            [self setVideoUploadProgress:uploadContext videoUpload:videoUpload ws:ws];
+            
             ws.uploadRequest = videoUpload;
             [[QCloudCOSTransferMangerService costransfermangerServiceForKey:self.uploadKey] UploadObject:videoUpload];
         });
@@ -864,178 +960,68 @@
     [self notifyCosUploadEnd:uploadContext];
 }
 
-- (void)handleUploadBlock:(QCloudUploadObjectResult *)result withError:(NSError *)error withContext:(TVCUploadContext *)uploadContext
-                  withCug:(TVCUGCResult *)cug withTcpTimeOut:(uint64_t)tcpConenctionTimeCost withRspTime:(uint64_t)recvRspTimeCost {
-    __weak TVCClient *ws = self;
-    NSString *requestId = [result.__originHTTPURLResponse__.allHeaderFields objectForKey:@"x-cos-request-id"];
-    __block uint64_t reqTimeCost = [[NSDate date] timeIntervalSince1970] * 1000 - uploadContext.reqTime;
-    TVCUploadParam *param = uploadContext.uploadParam;
-    dispatch_semaphore_t semaphore = uploadContext.gcdSem;
-    
-    if (error) {
-        NSString *errInfo = error.description;
-        NSString *cosErrorCode = @"";
-        if (error.userInfo != nil) {
-            errInfo = error.userInfo.description;
+
+//上传进度
+- (void)setVideoUploadProgress:(TVCUploadContext *)uploadContext videoUpload:(QCloudCOSXMLUploadObjectRequest *)videoUpload ws:(TVCClient *)ws{
+    TVCProgressBlock progress = uploadContext.progressBlock;
+    [videoUpload setSendProcessBlock:^(int64_t bytesSent, int64_t totalBytesSent, int64_t totalBytesExpectedToSend) {
+        if (!ws.realProgressFired) {
+            [ws.timer setFireDate:[NSDate distantFuture]];
+            ws.realProgressFired = YES;
         }
-        cosErrorCode = [NSString stringWithFormat:@"%d", error.code];
 
-        // 取消的情况不清除session缓存，错误码定义见 https://cloud.tencent.com/document/product/436/30443
-        if (error.code == 30000) {
-            uploadContext.lastStatus = TVC_ERR_USER_CANCLE;
-            uploadContext.desc = [NSString stringWithFormat:@"upload video, user cancled"];
-
-            [ws txReport:TVC_UPLOAD_EVENT_ID_COS errCode:TVC_ERR_USER_CANCLE vodErrCode:0 cosErrCode:cosErrorCode errInfo:errInfo
-                            reqTime:uploadContext.reqTime
-                        reqTimeCost:reqTimeCost
-                             reqKey:ws.reqKey
-                              appId:cug.userAppid
-                           fileSize:uploadContext.videoSize
-                           fileType:[ws getFileType:uploadContext.uploadParam.videoPath]
-                           fileName:[ws getFileName:uploadContext.uploadParam.videoPath]
-                         sessionKey:cug.uploadSession
-                             fileId:@""
-                          cosRegion:cug.uploadRegion
-                          useCosAcc:cug.useCosAcc
-                       cosRequestId:requestId
-                 cosTcpConnTimeCost:tcpConenctionTimeCost
-                cosRecvRespTimeCost:recvRspTimeCost];
-        } else {
-            uploadContext.lastStatus = TVC_ERR_VIDEO_UPLOAD_FAILED;
-            uploadContext.desc = [NSString stringWithFormat:@"upload video, cos code:%d, cos desc:%@", error.code, error.description];
-            //网络断开，不清除session缓存
-            if (error.code != -1009) {
-                [ws setSession:nil resumeData:nil lastModTime:0 withFilePath:param.videoPath];
+        if (progress) {
+            uint64_t total = uploadContext.videoSize + uploadContext.coverSize;
+            uploadContext.currentUpload = totalBytesSent;
+            if (uploadContext.currentUpload > total) {
+                uploadContext.currentUpload = total;
+                ws.virtualPercent = 100 - VIRTUAL_TOTAL_PERCENT;
+                [ws.timer setFireDate:[NSDate date]];  //上传完成，启动结束虚拟进度
+            } else {
+                progress(uploadContext.currentUpload * (100 - 2 * VIRTUAL_TOTAL_PERCENT) / 100 + VIRTUAL_TOTAL_PERCENT * total / 100, total);
             }
-
-            [ws txReport:TVC_UPLOAD_EVENT_ID_COS errCode:TVC_ERR_VIDEO_UPLOAD_FAILED vodErrCode:0 cosErrCode:cosErrorCode errInfo:errInfo
-                            reqTime:uploadContext.reqTime
-                        reqTimeCost:reqTimeCost
-                             reqKey:ws.reqKey
-                              appId:cug.userAppid
-                           fileSize:uploadContext.videoSize
-                           fileType:[ws getFileType:uploadContext.uploadParam.videoPath]
-                           fileName:[ws getFileName:uploadContext.uploadParam.videoPath]
-                         sessionKey:cug.uploadSession
-                             fileId:@""
-                          cosRegion:cug.uploadRegion
-                          useCosAcc:cug.useCosAcc
-                       cosRequestId:requestId
-                 cosTcpConnTimeCost:tcpConenctionTimeCost
-                cosRecvRespTimeCost:recvRspTimeCost];
         }
-        dispatch_semaphore_signal(semaphore);
-        if (uploadContext.isUploadCover) {
-            dispatch_semaphore_signal(semaphore);
+    }];
+}
+
+- (void)setCoverUploadProgress:(TVCUploadContext *)uploadContext coverUpload:(QCloudCOSXMLUploadObjectRequest *)coverUpload ws:(TVCClient *)ws{
+    TVCProgressBlock progress = uploadContext.progressBlock;
+    [coverUpload setSendProcessBlock:^(int64_t bytesSent, int64_t totalBytesSent, int64_t totalBytesExpectedToSend) {
+        if (progress) {
+            uint64_t total = uploadContext.videoSize + uploadContext.coverSize;
+            uploadContext.currentUpload += bytesSent;
+            if (uploadContext.currentUpload > total) {
+                uploadContext.currentUpload = total;
+                ws.virtualPercent = 100 - VIRTUAL_TOTAL_PERCENT;
+                [ws.timer setFireDate:[NSDate date]];  //上传完成，启动结束虚拟进度
+            } else {
+                progress(
+                    uploadContext.currentUpload * (100 - 2 * VIRTUAL_TOTAL_PERCENT) / 100 + VIRTUAL_TOTAL_PERCENT * total / 100,
+                    total);
+            }
         }
-    } else {
-        NSLog(@"upload video succ");
-        //视频上传完成，上报视频上传信息，清除session缓存
-        [ws txReport:TVC_UPLOAD_EVENT_ID_COS errCode:0 vodErrCode:0 cosErrCode:@"" errInfo:@"" reqTime:uploadContext.reqTime
-                    reqTimeCost:reqTimeCost
-                         reqKey:ws.reqKey
-                          appId:cug.userAppid
-                       fileSize:uploadContext.videoSize
-                       fileType:[ws getFileType:uploadContext.uploadParam.videoPath]
-                       fileName:[ws getFileName:uploadContext.uploadParam.videoPath]
-                     sessionKey:cug.uploadSession
-                         fileId:@""
-                      cosRegion:cug.uploadRegion
-                      useCosAcc:cug.useCosAcc
-                   cosRequestId:requestId
-             cosTcpConnTimeCost:tcpConenctionTimeCost
-            cosRecvRespTimeCost:recvRspTimeCost];
-        [ws setSession:nil resumeData:nil lastModTime:0 withFilePath:param.videoPath];
-        // 2-2.开始上传封面
-        if (uploadContext.isUploadCover) {
-            uploadContext.reqTime = [[NSDate date] timeIntervalSince1970] * 1000;
+    }];
+}
 
-            QCloudCOSXMLUploadObjectRequest *coverUpload = [QCloudCOSXMLUploadObjectRequest new];
-            coverUpload.body = [NSURL fileURLWithPath:param.coverPath];
-            coverUpload.bucket = cug.uploadBucket;
-            coverUpload.object = cug.imagePath;
-
-            __block uint64_t tcpConenctionTimeCost = 0;
-            __block uint64_t recvRspTimeCost = 0;
-
-            [coverUpload setRequstsMetricArrayBlock:^(NSMutableArray *requstMetricArray) {
-                if ([requstMetricArray count] > 0 && [requstMetricArray[0] isKindOfClass:[NSDictionary class]]) {
-                    if ([[requstMetricArray[0] allValues] count] > 0) {
-                        NSDictionary *dic = [requstMetricArray[0] allValues][0];
-                        tcpConenctionTimeCost = ([dic[@"kDnsLookupTookTime"] doubleValue] + [dic[@"kConnectTookTime"] doubleValue] +
-                                                    [dic[@"kSignRequestTookTime"] doubleValue])
-                                                * 1000;
-                        recvRspTimeCost = ([dic[@"kTaskTookTime"] doubleValue] + [dic[@"kReadResponseHeaderTookTime"] doubleValue] +
-                                              [dic[@"kReadResponseBodyTookTime"] doubleValue])
-                                          * 1000;
-                    }
-                }
-            }];
-
-            [coverUpload setFinishBlock:^(QCloudUploadObjectResult *result, NSError *error) {
-                NSString *cosErrorCode = @"";
-                NSString *requestId = [result.__originHTTPURLResponse__.allHeaderFields objectForKey:@"x-cos-request-id"];
-
-                if (error) {
-                    // 2-2步骤出错
-                    NSLog(@"upload cover fail : %d", error.code);
-                    NSString *errInfo = error.description;
-                    if (error.userInfo != nil) {
-                        errInfo = error.userInfo.description;
-                    }
-                    cosErrorCode = [NSString stringWithFormat:@"%d", error.code];
-
-                    if (error.code == 30000) {
-                        uploadContext.lastStatus = TVC_ERR_USER_CANCLE;
-                        uploadContext.desc = [NSString stringWithFormat:@"upload cover, user cancled"];
-                    } else {
-                        uploadContext.lastStatus = TVC_ERR_COVER_UPLOAD_FAILED;
-                        uploadContext.desc = [NSString stringWithFormat:@"upload cover, cos code:%@, cos desc:%@", cosErrorCode, errInfo];
-                    }
-                } else {
-                    NSLog(@"upload cover succ");
-                }
-                reqTimeCost = [[NSDate date] timeIntervalSince1970] * 1000 - uploadContext.reqTime;
-                [ws txReport:TVC_UPLOAD_EVENT_ID_COS errCode:uploadContext.lastStatus vodErrCode:0 cosErrCode:cosErrorCode
-                                errInfo:uploadContext.desc
-                                reqTime:uploadContext.reqTime
-                            reqTimeCost:reqTimeCost
-                                 reqKey:ws.reqKey
-                                  appId:cug.userAppid
-                               fileSize:uploadContext.coverSize
-                               fileType:[ws getFileType:uploadContext.uploadParam.coverPath]
-                               fileName:[ws getFileName:uploadContext.uploadParam.coverPath]
-                             sessionKey:cug.uploadSession
-                                 fileId:@""
-                              cosRegion:cug.uploadRegion
-                              useCosAcc:cug.useCosAcc
-                           cosRequestId:requestId
-                     cosTcpConnTimeCost:tcpConenctionTimeCost
-                    cosRecvRespTimeCost:recvRspTimeCost];
-                dispatch_semaphore_signal(semaphore);
-            }];
-
-            TVCProgressBlock progress = uploadContext.progressBlock;
-            [coverUpload setSendProcessBlock:^(int64_t bytesSent, int64_t totalBytesSent, int64_t totalBytesExpectedToSend) {
-                if (progress) {
-                    uint64_t total = uploadContext.videoSize + uploadContext.coverSize;
-                    uploadContext.currentUpload += bytesSent;
-                    if (uploadContext.currentUpload > total) {
-                        uploadContext.currentUpload = total;
-                        ws.virtualPercent = 100 - VIRTUAL_TOTAL_PERCENT;
-                        [ws.timer setFireDate:[NSDate date]];  //上传完成，启动结束虚拟进度
-                    } else {
-                        progress(
-                            uploadContext.currentUpload * (100 - 2 * VIRTUAL_TOTAL_PERCENT) / 100 + VIRTUAL_TOTAL_PERCENT * total / 100,
-                            total);
-                    }
-                }
-            }];
-            ws.uploadRequest = coverUpload;
-            [[QCloudCOSTransferMangerService costransfermangerServiceForKey:self.uploadKey] UploadObject:coverUpload];
-        }
+//网络断开，不清除session缓存
+-(void)netError:(NSInteger)code
+      videoPath:(NSString *)videoPath{
+    if (code != -1009) {
+        [self setSession:nil resumeData:nil lastModTime:0 withFilePath:videoPath];
     }
-    dispatch_semaphore_signal(semaphore);
+}
+
+- (void)setContext:(TVCUploadContext *)uploadContext
+                        error:(NSError *)error
+                 cosErrorCode:(NSString *)cosErrorCode
+                      errInfo:(NSString *)errInfo{
+    if (error.code == 30000) {
+        uploadContext.lastStatus = TVC_ERR_USER_CANCLE;
+        uploadContext.desc = [NSString stringWithFormat:@"upload cover, user cancled"];
+    } else {
+        uploadContext.lastStatus = TVC_ERR_COVER_UPLOAD_FAILED;
+        uploadContext.desc = [NSString stringWithFormat:@"upload cover, cos code:%@, cos desc:%@", cosErrorCode, errInfo];
+    }
 }
 
 - (void)notifyCosUploadEnd:(TVCUploadContext *)uploadContext {
@@ -1270,18 +1256,143 @@
 // "TVCMultipartResumeExpireTimeKey": {filePath1: expireTime1, filePath2: expireTime2, filePath3: expireTime3}
 // session的过期时间是1天
 - (NSString *)getSessionFromFilepath:(TVCUploadContext *)uploadContext {
-    ResumeCacheData *cacheData = [self.config.uploadResumController getResumeData:uploadContext.uploadParam.videoPath];
-    if(cacheData != nil) {
-        uploadContext.resumeData = cacheData.resumeData;
-        self.videoLastModTime = cacheData.videoLastModTime;
-        self.coverLastModTime = cacheData.coverLastModTime;
-        return cacheData.vodSessionKey;
-    } else {
-        uploadContext.resumeData = nil;
-        self.videoLastModTime = 0;
-        self.coverLastModTime = 0;
+    NSString *filePath = uploadContext.uploadParam.videoPath;
+    if (filePath == nil || filePath.length == 0) {
         return nil;
     }
+
+    NSMutableDictionary *sessionDic = [[NSMutableDictionary alloc] init];
+    NSMutableDictionary *timeDic = [[NSMutableDictionary alloc] init];
+    NSMutableDictionary *lastModTimeDic = [[NSMutableDictionary alloc] init];
+    NSMutableDictionary *coverLastModTimeDic = [[NSMutableDictionary alloc] init];
+    NSMutableDictionary *resumeDataDic = [[NSMutableDictionary alloc] init];
+
+    NSError *jsonErr = nil;
+
+    // read [itemPath, session]
+    NSString *strPathToSession = [[NSUserDefaults standardUserDefaults] objectForKey:TVCMultipartResumeSessionKey];
+    if (strPathToSession == nil) {
+        NSLog(@"TVCMultipartResumeSessionKey is nil");
+        return nil;
+    }
+    sessionDic = [NSJSONSerialization JSONObjectWithData:[strPathToSession dataUsingEncoding:NSUTF8StringEncoding] options:NSJSONReadingAllowFragments
+                                                   error:&jsonErr];
+    if (jsonErr) {
+        NSLog(@"TVCMultipartResumeSessionKey is not json format: %@", strPathToSession);
+        return nil;
+    }
+
+    // read [itemPath, expireTime]
+    NSString *strPathToExpireTime = [[NSUserDefaults standardUserDefaults] objectForKey:TVCMultipartResumeExpireTimeKey];
+    if (strPathToExpireTime == nil) {
+        NSLog(@"TVCMultipartResumeSessionKey expireTime is nil");
+        return nil;
+    }
+    timeDic = [NSJSONSerialization JSONObjectWithData:[strPathToExpireTime dataUsingEncoding:NSUTF8StringEncoding] options:NSJSONReadingAllowFragments
+                                                error:&jsonErr];
+    if (jsonErr) {
+        NSLog(@"TVCMultipartResumeExpireTimeKey is not json format: %@", strPathToExpireTime);
+        return nil;
+    }
+
+    // read [itemPath, fileLastModTime]
+    NSString *strPathToLastModTime = [[NSUserDefaults standardUserDefaults] objectForKey:TVCMultipartFileLastModTime];
+    if (strPathToLastModTime == nil) {
+        NSLog(@"TVCMultipartResumeSessionKey lastModTime is nil");
+        return nil;
+    }
+    lastModTimeDic = [NSJSONSerialization JSONObjectWithData:[strPathToLastModTime dataUsingEncoding:NSUTF8StringEncoding]
+                                                     options:NSJSONReadingAllowFragments
+                                                       error:&jsonErr];
+    if (jsonErr) {
+        NSLog(@"TVCMultipartFileLastModTime is not json format: %@", strPathToLastModTime);
+        return nil;
+    }
+
+    // read [itemPath, CoverFileLastModTime]
+    NSString *strPathToCoverLastModTime = [[NSUserDefaults standardUserDefaults] objectForKey:TVCMultipartCoverFileLastModTime];
+    if (strPathToCoverLastModTime == nil) {
+        NSLog(@"TVCMultipartResumeSessionKey coverLastModTime is nil");
+        return nil;
+    }
+    coverLastModTimeDic = [NSJSONSerialization JSONObjectWithData:[strPathToCoverLastModTime dataUsingEncoding:NSUTF8StringEncoding]
+                                                          options:NSJSONReadingAllowFragments
+                                                            error:&jsonErr];
+    if (jsonErr) {
+        NSLog(@"TVCMultipartCoverFileLastModTime is not json format: %@", strPathToCoverLastModTime);
+        return nil;
+    }
+
+    // read [itemPath, resumeData]
+    NSString *strPathToResumeData = [[NSUserDefaults standardUserDefaults] objectForKey:TVCMultipartResumeData];
+    if (strPathToResumeData == nil) {
+        NSLog(@"TVCMultipartResumeSessionKey resumeData is nil");
+        return nil;
+    }
+    resumeDataDic = [NSJSONSerialization JSONObjectWithData:[strPathToResumeData dataUsingEncoding:NSUTF8StringEncoding]
+                                                    options:NSJSONReadingAllowFragments
+                                                      error:&jsonErr];
+    if (jsonErr) {
+        NSLog(@"TVCMultipartReumeData is not json format: %@", strPathToResumeData);
+        return nil;
+    }
+
+    NSString *session = [sessionDic objectForKey:filePath];
+    NSInteger expireTime = [[timeDic objectForKey:filePath] integerValue];
+    unsigned long long lastModTime = [[lastModTimeDic objectForKey:filePath] unsignedLongLongValue];
+    unsigned long long coverLastModTime = [[coverLastModTimeDic objectForKey:filePath] unsignedLongLongValue];
+    NSString *sResumeData = [resumeDataDic objectForKey:filePath];
+    NSInteger nowTime = (NSInteger)[[NSDate date] timeIntervalSince1970] + 1;
+    NSString *ret = nil;
+
+    if (session && nowTime < expireTime && lastModTime == uploadContext.videoLastModTime && coverLastModTime == uploadContext.coverLastModTime
+        && sResumeData != nil && sResumeData.length != 0) {
+        ret = session;
+        NSData *resumeData = [[NSData alloc] initWithBase64EncodedString:sResumeData options:0];
+        uploadContext.resumeData = resumeData;
+    } else {
+        NSLog(@"TVCMultipartReumeData is invalid");
+    }
+
+    // 删除过期的session，并保存
+    NSMutableDictionary *newSessionDic = [[NSMutableDictionary alloc] init];
+    NSMutableDictionary *newTimeDic = [[NSMutableDictionary alloc] init];
+    NSMutableDictionary *newLastModTimeDic = [[NSMutableDictionary alloc] init];
+    NSMutableDictionary *newCoverLastModTimeDic = [[NSMutableDictionary alloc] init];
+    NSMutableDictionary *newResumeDataDic = [[NSMutableDictionary alloc] init];
+    for (NSString *key in timeDic) {
+        NSInteger expireTime = [[timeDic objectForKey:key] integerValue];
+        if (nowTime < expireTime) {
+            [newSessionDic setValue:[sessionDic objectForKey:key] forKey:key];
+            [newTimeDic setValue:[timeDic objectForKey:key] forKey:key];
+            [newLastModTimeDic setValue:[lastModTimeDic objectForKey:key] forKey:key];
+            [newCoverLastModTimeDic setValue:[coverLastModTimeDic objectForKey:key] forKey:key];
+            [newResumeDataDic setValue:[resumeDataDic objectForKey:key] forKey:key];
+        }
+    }
+
+    // 将newSessionDic 和 newTimeDic 保存文件
+    NSData *newSessionJsonData = [NSJSONSerialization dataWithJSONObject:newSessionDic options:0 error:&jsonErr];
+    NSData *newTimeJsonData = [NSJSONSerialization dataWithJSONObject:newTimeDic options:0 error:&jsonErr];
+    NSData *newLastModTimeJsonData = [NSJSONSerialization dataWithJSONObject:newLastModTimeDic options:0 error:&jsonErr];
+    NSData *newCoverLastModTimeJsonData = [NSJSONSerialization dataWithJSONObject:newCoverLastModTimeDic options:0 error:&jsonErr];
+    NSData *newResumeDataJsonData = [NSJSONSerialization dataWithJSONObject:newResumeDataDic options:0 error:&jsonErr];
+
+    NSString *strNeweSession = [[NSString alloc] initWithData:newSessionJsonData encoding:NSUTF8StringEncoding];
+    NSString *strNewTime = [[NSString alloc] initWithData:newTimeJsonData encoding:NSUTF8StringEncoding];
+    NSString *strNewLastModTime = [[NSString alloc] initWithData:newLastModTimeJsonData encoding:NSUTF8StringEncoding];
+    NSString *strNewCoverLastModTime = [[NSString alloc] initWithData:newCoverLastModTimeJsonData encoding:NSUTF8StringEncoding];
+    NSString *strNewResumeData = [[NSString alloc] initWithData:newResumeDataJsonData encoding:NSUTF8StringEncoding];
+
+    [[NSUserDefaults standardUserDefaults] setObject:strNeweSession forKey:TVCMultipartResumeSessionKey];
+    [[NSUserDefaults standardUserDefaults] setObject:strNewTime forKey:TVCMultipartResumeExpireTimeKey];
+    [[NSUserDefaults standardUserDefaults] setObject:strNewLastModTime forKey:TVCMultipartFileLastModTime];
+    [[NSUserDefaults standardUserDefaults] setObject:strNewCoverLastModTime forKey:TVCMultipartCoverFileLastModTime];
+    [[NSUserDefaults standardUserDefaults] setObject:strNewResumeData forKey:TVCMultipartResumeData];
+
+    [[NSUserDefaults standardUserDefaults] synchronize];
+
+    return ret;
 }
 
 - (void)setSession:(NSString *)session resumeData:(NSData *)resumeData lastModTime:(uint64_t)lastModTime withFilePath:(NSString *)filePath {
@@ -1296,7 +1407,98 @@
     if (filePath == nil || filePath.length == 0) {
         return;
     }
-    [self.config.uploadResumController saveSession:filePath withSessionKey:session withResumeData:resumeData withUploadInfo:self.uploadContext];
+
+    NSMutableDictionary *sessionDic = [[NSMutableDictionary alloc] init];
+    NSMutableDictionary *timeDic = [[NSMutableDictionary alloc] init];
+    NSMutableDictionary *lastModTimeDic = [[NSMutableDictionary alloc] init];
+    NSMutableDictionary *coverLastModTimeDic = [[NSMutableDictionary alloc] init];
+    NSMutableDictionary *resumeDataDic = [[NSMutableDictionary alloc] init];
+    NSError *jsonErr = nil;
+
+    // read [itemPath, session]
+    NSString *strPathToSession = [[NSUserDefaults standardUserDefaults] objectForKey:TVCMultipartResumeSessionKey];
+    if (strPathToSession) {
+        NSDictionary *dic = [NSJSONSerialization JSONObjectWithData:[strPathToSession dataUsingEncoding:NSUTF8StringEncoding]
+                                                            options:NSJSONReadingAllowFragments
+                                                              error:&jsonErr];
+        sessionDic = [NSMutableDictionary dictionaryWithDictionary:dic];
+    }
+
+    // read [itemPath, expireTime]
+    NSString *strPathToExpireTime = [[NSUserDefaults standardUserDefaults] objectForKey:TVCMultipartResumeExpireTimeKey];
+    if (strPathToExpireTime) {
+        NSDictionary *dic = [NSJSONSerialization JSONObjectWithData:[strPathToExpireTime dataUsingEncoding:NSUTF8StringEncoding]
+                                                            options:NSJSONReadingAllowFragments
+                                                              error:&jsonErr];
+        timeDic = [NSMutableDictionary dictionaryWithDictionary:dic];
+    }
+
+    // read [itemPath, lastModTime]
+    NSString *strPathToLastModTime = [[NSUserDefaults standardUserDefaults] objectForKey:TVCMultipartFileLastModTime];
+    if (strPathToLastModTime) {
+        NSDictionary *dic = [NSJSONSerialization JSONObjectWithData:[strPathToLastModTime dataUsingEncoding:NSUTF8StringEncoding]
+                                                            options:NSJSONReadingAllowFragments
+                                                              error:&jsonErr];
+        lastModTimeDic = [NSMutableDictionary dictionaryWithDictionary:dic];
+    }
+
+    // read [itemPath, coverLastModTime]
+    NSString *strPathToCoverLastModTime = [[NSUserDefaults standardUserDefaults] objectForKey:TVCMultipartFileLastModTime];
+    if (strPathToCoverLastModTime) {
+        NSDictionary *dic = [NSJSONSerialization JSONObjectWithData:[strPathToCoverLastModTime dataUsingEncoding:NSUTF8StringEncoding]
+                                                            options:NSJSONReadingAllowFragments
+                                                              error:&jsonErr];
+        coverLastModTimeDic = [NSMutableDictionary dictionaryWithDictionary:dic];
+    }
+
+    // read [itemPath, resumeData]
+    NSString *strPathToResumeData = [[NSUserDefaults standardUserDefaults] objectForKey:TVCMultipartResumeData];
+    if (strPathToResumeData) {
+        NSDictionary *dic = [NSJSONSerialization JSONObjectWithData:[strPathToResumeData dataUsingEncoding:NSUTF8StringEncoding]
+                                                            options:NSJSONReadingAllowFragments
+                                                              error:&jsonErr];
+        resumeDataDic = [NSMutableDictionary dictionaryWithDictionary:dic];
+    }
+
+    // 设置过期时间为1天
+    NSInteger expireTime = (NSInteger)[[NSDate date] timeIntervalSince1970] + 24 * 60 * 60;
+
+    // session、resumeDataDic 为空，lastModTime为0就表示删掉该 [key, value]
+    if (session == nil || session.length == 0 || resumeData == nil || resumeData.length == 0 || lastModTime == 0 || coverLastModTime == 0) {
+        [sessionDic removeObjectForKey:filePath];
+        [timeDic removeObjectForKey:filePath];
+        [lastModTimeDic removeObjectForKey:filePath];
+        [coverLastModTimeDic removeObjectForKey:filePath];
+        [resumeDataDic removeObjectForKey:filePath];
+    } else {
+        [sessionDic setValue:session forKey:filePath];
+        [timeDic setValue:@(expireTime) forKey:filePath];
+        [lastModTimeDic setValue:@(lastModTime) forKey:filePath];
+        [coverLastModTimeDic setValue:@(coverLastModTime) forKey:filePath];
+        NSString *sResumeData = [resumeData base64EncodedStringWithOptions:0];
+        [resumeDataDic setValue:sResumeData forKey:filePath];
+    }
+
+    // 保存文件
+    NSData *newSessionJsonData = [NSJSONSerialization dataWithJSONObject:sessionDic options:0 error:&jsonErr];
+    NSData *newTimeJsonData = [NSJSONSerialization dataWithJSONObject:timeDic options:0 error:&jsonErr];
+    NSData *newLastModTimeJsonData = [NSJSONSerialization dataWithJSONObject:lastModTimeDic options:0 error:&jsonErr];
+    NSData *newCoverLastModTimeJsonData = [NSJSONSerialization dataWithJSONObject:coverLastModTimeDic options:0 error:&jsonErr];
+    NSData *newResumeDaaJsonData = [NSJSONSerialization dataWithJSONObject:resumeDataDic options:0 error:&jsonErr];
+
+    NSString *strNeweSession = [[NSString alloc] initWithData:newSessionJsonData encoding:NSUTF8StringEncoding];
+    NSString *strNewTime = [[NSString alloc] initWithData:newTimeJsonData encoding:NSUTF8StringEncoding];
+    NSString *strNewLastModTime = [[NSString alloc] initWithData:newLastModTimeJsonData encoding:NSUTF8StringEncoding];
+    NSString *strNewCoverLastModTime = [[NSString alloc] initWithData:newCoverLastModTimeJsonData encoding:NSUTF8StringEncoding];
+    NSString *strNewResumeData = [[NSString alloc] initWithData:newResumeDaaJsonData encoding:NSUTF8StringEncoding];
+
+    [[NSUserDefaults standardUserDefaults] setObject:strNeweSession forKey:TVCMultipartResumeSessionKey];
+    [[NSUserDefaults standardUserDefaults] setObject:strNewTime forKey:TVCMultipartResumeExpireTimeKey];
+    [[NSUserDefaults standardUserDefaults] setObject:strNewLastModTime forKey:TVCMultipartFileLastModTime];
+    [[NSUserDefaults standardUserDefaults] setObject:strNewCoverLastModTime forKey:TVCMultipartCoverFileLastModTime];
+    [[NSUserDefaults standardUserDefaults] setObject:strNewResumeData forKey:TVCMultipartResumeData];
+
+    [[NSUserDefaults standardUserDefaults] synchronize];
 }
 
 // 上传完成
@@ -1434,3 +1636,4 @@
 }
 
 @end
+ 

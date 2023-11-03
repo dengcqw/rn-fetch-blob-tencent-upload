@@ -7,6 +7,7 @@
 //
 
 #import <Foundation/Foundation.h>
+#import "QuicClient.h"
 
 typedef void (^TXUGCPrepareUploadCompletion)();
 
@@ -17,7 +18,6 @@ typedef void (^TXUGCPrepareUploadCompletion)();
 @property(nonatomic, assign) BOOL isQuic;
 @end
 
-@class Reachability;
 @interface TXUGCPublishOptCenter : NSObject
 + (instancetype)shareInstance;
 @property(atomic, assign) BOOL isStarted;
@@ -27,9 +27,7 @@ typedef void (^TXUGCPrepareUploadCompletion)();
 @property(strong, nonatomic) NSMutableDictionary *publishingList;
 @property(strong, nonatomic) TXUGCCosRegionInfo *cosRegionInfo;
 @property(nonatomic, assign) UInt64 minCosRespTime;
-@property(nonatomic, strong) NSRegularExpression *regexIpv4;
-@property(nonatomic, strong) NSRegularExpression *regexIpv6;
-@property(nonatomic, strong) Reachability *reachability;
+@property(nonatomic, strong) QuicClient *quicClient; //quicClient
 
 - (void)prepareUpload:(NSString *)signature
     prepareUploadComplete:(TXUGCPrepareUploadCompletion)prepareUploadComplete;

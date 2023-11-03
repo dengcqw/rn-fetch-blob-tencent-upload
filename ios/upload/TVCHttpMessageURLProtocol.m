@@ -71,18 +71,12 @@
  * 取消请求
  */
 - (void)stopLoading {
-    [self closeLoading];
-    [self.client URLProtocol:self didFailWithError:[[NSError alloc] initWithDomain:@"stop loading" code:-1 userInfo:nil]];
-}
-
-- (void)closeLoading {
-    @synchronized (self) {
-        if (inputStream && inputStream.streamStatus == NSStreamStatusOpen) {
-            [inputStream removeFromRunLoop:curRunLoop forMode:NSRunLoopCommonModes];
-            [inputStream setDelegate:nil];
-            [inputStream close];
-        }
+    if (inputStream.streamStatus == NSStreamStatusOpen) {
+        [inputStream removeFromRunLoop:curRunLoop forMode:NSRunLoopCommonModes];
+        [inputStream setDelegate:nil];
+        [inputStream close];
     }
+    [self.client URLProtocol:self didFailWithError:[[NSError alloc] initWithDomain:@"stop loading" code:-1 userInfo:nil]];
 }
 
 /**
@@ -119,8 +113,6 @@
             CFStringRef requestHeader = (__bridge CFStringRef) header;
             CFStringRef requestHeaderValue = (__bridge CFStringRef) [headFields valueForKey:header];
             CFHTTPMessageSetHeaderFieldValue(cfrequest, requestHeader, requestHeaderValue);
-            CFRelease(requestHeader);
-            CFRelease(requestHeaderValue);
         }
     }
     
@@ -164,15 +156,15 @@
     CFHTTPMessageRef message = (CFHTTPMessageRef) CFReadStreamCopyProperty(readStream, kCFStreamPropertyHTTPResponseHeader);
     if (CFHTTPMessageIsHeaderComplete(message)) {
         // 确保response头部信息完整
-        CFDictionaryRef cfHeadDict = CFHTTPMessageCopyAllHeaderFields(message);
-        NSDictionary *headDict = (__bridge_transfer NSDictionary *) (cfHeadDict);
+        NSDictionary *headDict = (__bridge_transfer NSDictionary *) (CFHTTPMessageCopyAllHeaderFields(message));
         
         // 获取响应头部的状态码
         CFIndex myErrCode = CFHTTPMessageGetResponseStatusCode(message);
-        CFRelease(message);
-        message = nil;
+        
         // 把当前请求关闭
-        [self closeLoading];
+        [inputStream removeFromRunLoop:curRunLoop forMode:NSRunLoopCommonModes];
+        [inputStream setDelegate:nil];
+        [inputStream close];
         
         if (myErrCode >= 200 && myErrCode < 300) {
             
@@ -216,10 +208,11 @@
         }
     } else {
         // 头部信息不完整，关闭inputstream，通知client
-        [self closeLoading];
+        [inputStream removeFromRunLoop:curRunLoop forMode:NSRunLoopCommonModes];
+        [inputStream setDelegate:nil];
+        [inputStream close];
         [self.client URLProtocolDidFinishLoading:self];
     }
-    CFRelease(readStream);
     if (NULL != message) CFRelease(message);
 }
 
